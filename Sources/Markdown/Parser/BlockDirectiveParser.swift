@@ -190,9 +190,7 @@ struct PendingBlockDirective {
                 let leadingSpacingCount = line.untrimmedText.count - textCount - trailingWhiteSpaceCount - 1
                 innerIndentationColumnCount = leadingSpacingCount // Should we add a new property for this kind of usage?
                 
-                let startIndex = line.untrimmedText.startIndex
-                let endIndex = line.untrimmedText.index(startIndex, offsetBy: leadingSpacingCount)
-                let newLine = line.untrimmedText.replacingCharacters(in: startIndex..<endIndex, with: String(repeating: " ", count: leadingSpacingCount)).dropLast(trailingWhiteSpaceCount + 1)
+                let newLine = String(repeating: " ", count: leadingSpacingCount) + line.untrimmedText.dropFirst(leadingSpacingCount).dropLast(trailingWhiteSpaceCount + 1)
                 pendingLine = TrimmedLine(newLine.dropFirst(0), source: line.source, lineNumber: line.lineNumber)
                 parseState = .done
                 endLocation = SourceLocation(line: line.lineNumber ?? 0, column: line.untrimmedText.count + 1, source: line.source)
@@ -241,14 +239,26 @@ struct PendingDoxygenCommand {
 
     var atLocation: SourceLocation
 
+    var atSignIndentation: Int
+
     var nameLocation: SourceLocation
+
+    var innerIndentation: Int? = nil
 
     var kind: CommandKind
 
     var endLocation: SourceLocation
 
+    var indentationAdjustment: Int {
+        innerIndentation ?? atSignIndentation
+    }
+
     mutating func addLine(_ line: TrimmedLine) {
         endLocation = SourceLocation(line: line.lineNumber ?? 0, column: line.untrimmedText.count + 1, source: line.source)
+
+        if innerIndentation == nil, line.location?.line != atLocation.line, !line.isEmptyOrAllWhitespace {
+            innerIndentation = line.indentationColumnCount
+        }
     }
 }
 
@@ -398,29 +408,19 @@ struct TrimmedLine {
         while let c = prefix.next() {
             if isEscaped {
                 isEscaped = false
-                takeCount += 1
-                continue
             }
-            if allowEscape,
+            else if allowEscape,
                c == "\\" {
                 isEscaped = true
-                takeCount += 1
-                continue
             }
-            if isQuoted {
-                if c == "\"" {
-                    isQuoted = false
-                }
-                takeCount += 1
-                continue
+            else if isQuoted {
+                isQuoted = (c != "\"")
             }
-            if allowQuote,
+            else if allowQuote,
                c == "\"" {
                 isQuoted = true
-                takeCount += 1
-                continue
             }
-            if case .stop = stop(c) {
+            else if case .stop = stop(c) {
                 break
             }
             takeCount += 1
@@ -655,8 +655,8 @@ private enum ParseContainer: CustomStringConvertible {
             return parent?.indentationAdjustment(under: nil) ?? 0
         case .blockDirective(let pendingBlockDirective, _):
             return pendingBlockDirective.indentationColumnCount
-        case .doxygenCommand:
-            return parent?.indentationAdjustment(under: nil) ?? 0
+        case .doxygenCommand(let pendingCommand, _):
+            return pendingCommand.indentationAdjustment
         }
     }
 
@@ -842,6 +842,7 @@ struct ParseContainerStack {
         guard !isCodeFenceOrIndentedCodeBlock(on: line) else { return nil }
 
         var remainder = line
+        let indent = remainder.lexWhitespace()
         guard let at = remainder.lex(until: { ch in
             switch ch {
             case "@", "\\":
@@ -871,6 +872,7 @@ struct ParseContainerStack {
             remainder.lexWhitespace()
             var pendingCommand = PendingDoxygenCommand(
                 atLocation: at.range!.lowerBound,
+                atSignIndentation: indent?.text.count ?? 0,
                 nameLocation: name.range!.lowerBound,
                 kind: .param(name: paramName.text),
                 endLocation: name.range!.upperBound)
@@ -879,6 +881,7 @@ struct ParseContainerStack {
         case "return", "returns", "result":
             var pendingCommand = PendingDoxygenCommand(
                 atLocation: at.range!.lowerBound,
+                atSignIndentation: indent?.text.count ?? 0,
                 nameLocation: name.range!.lowerBound,
                 kind: .returns,
                 endLocation: name.range!.upperBound)
