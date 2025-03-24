@@ -1,7 +1,7 @@
 /*
  This source file is part of the Swift.org open source project
 
- Copyright (c) 2021 Apple Inc. and the Swift project authors
+ Copyright (c) 2021-2024 Apple Inc. and the Swift project authors
  Licensed under Apache License v2.0 with Runtime Library Exception
 
  See https://swift.org/LICENSE.txt for license information
@@ -35,7 +35,7 @@ enum RawMarkupData: Equatable {
     case image(source: String?, title: String?)
     case inlineHTML(String)
     case lineBreak
-    case link(destination: String?)
+    case link(destination: String?, title: String?)
     case softBreak
     case strong
     case text(String)
@@ -52,6 +52,8 @@ enum RawMarkupData: Equatable {
     case tableRow
     case tableCell(colspan: UInt, rowspan: UInt)
 
+    case doxygenDiscussion
+    case doxygenNote
     case doxygenParam(name: String)
     case doxygenReturns
 }
@@ -188,10 +190,18 @@ final class RawMarkup: ManagedBuffer<RawMarkupHeader, RawMarkup> {
     /// Returns a new `RawMarkup` element replacing the slot at the given index with a new element.
     /// - note: The new element's `range` will be `nil`, as this API creates a new element outside of the parser.
     /// - precondition: The given index must be within the bounds of the children.
-    func substitutingChild(_ newChild: RawMarkup, at index: Int) -> RawMarkup {
+    func substitutingChild(_ newChild: RawMarkup, at index: Int, preserveRange: Bool = false) -> RawMarkup {
         var newChildren = copyChildren()
         newChildren[index] = newChild
-        return RawMarkup.create(data: header.data, parsedRange: newChild.header.parsedRange, children: newChildren)
+
+        let parsedRange: SourceRange?
+        if preserveRange {
+            parsedRange = header.parsedRange
+        } else {
+            parsedRange = newChild.header.parsedRange
+        }
+
+        return RawMarkup.create(data: header.data, parsedRange: parsedRange, children: newChildren)
     }
 
     func withChildren<Children: Collection>(_ newChildren: Children) -> RawMarkup where Children.Element == RawMarkup {
@@ -274,8 +284,8 @@ final class RawMarkup: ManagedBuffer<RawMarkupHeader, RawMarkup> {
         return .create(data: .lineBreak, parsedRange: parsedRange, children: [])
     }
 
-    static func link(destination: String?, parsedRange: SourceRange?, _ children: [RawMarkup]) -> RawMarkup {
-        return .create(data: .link(destination: destination), parsedRange: parsedRange, children: children)
+    static func link(destination: String?, title: String? = nil,parsedRange: SourceRange?, _ children: [RawMarkup]) -> RawMarkup {
+        return .create(data: .link(destination: destination, title: title), parsedRange: parsedRange, children: children)
     }
 
     static func softBreak(parsedRange: SourceRange?) -> RawMarkup {
@@ -334,6 +344,14 @@ final class RawMarkup: ManagedBuffer<RawMarkupHeader, RawMarkup> {
         return .create(data: .tableCell(colspan: colspan, rowspan: rowspan), parsedRange: parsedRange, children: children)
     }
 
+    static func doxygenDiscussion(parsedRange: SourceRange?, _ children: [RawMarkup]) -> RawMarkup {
+        return .create(data: .doxygenDiscussion, parsedRange: parsedRange, children: children)
+    }
+
+    static func doxygenNote(parsedRange: SourceRange?, _ children: [RawMarkup]) -> RawMarkup {
+        return .create(data: .doxygenNote, parsedRange: parsedRange, children: children)
+    }
+
     static func doxygenParam(name: String, parsedRange: SourceRange?, _ children: [RawMarkup]) -> RawMarkup {
         return .create(data: .doxygenParam(name: name), parsedRange: parsedRange, children: children)
     }
@@ -346,5 +364,15 @@ final class RawMarkup: ManagedBuffer<RawMarkupHeader, RawMarkup> {
 fileprivate extension Sequence where Element == RawMarkup {
     var subtreeCount: Int {
         return self.lazy.map { $0.subtreeCount }.reduce(0, +)
+    }
+}
+
+extension BidirectionalCollection where Element == RawMarkup {
+    var parsedRange: SourceRange? {
+        if let lowerBound = first?.parsedRange?.lowerBound, let upperBound = last?.parsedRange?.upperBound {
+            return lowerBound..<upperBound
+        } else {
+            return nil
+        }
     }
 }

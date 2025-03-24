@@ -1,7 +1,7 @@
 /*
  This source file is part of the Swift.org open source project
 
- Copyright (c) 2021-2023 Apple Inc. and the Swift project authors
+ Copyright (c) 2021-2024 Apple Inc. and the Swift project authors
  Licensed under Apache License v2.0 with Runtime Library Exception
 
  See https://swift.org/LICENSE.txt for license information
@@ -267,8 +267,9 @@ public struct MarkupFormatter: MarkupWalker {
             - emphasisMarker: The character to use for emphasis and strong emphasis markers.
             - condenseAutolinks: Print links whose link text and destination match as autolinks, e.g. `<https://swift.org>`.
             - preferredHeadingStyle: The preferred heading style.
-            - lineLimit: The preferred maximum line length and method for splitting ``Text`` elements in an attempt to maintain that line length.
+            - preferredLineLimit: The preferred maximum line length and method for splitting ``Text`` elements in an attempt to maintain that line length.
             - customLinePrefix: An addition prefix to print at the start of each line, useful for adding documentation comment markers.
+            - doxygenCommandPrefix: The command command prefix, which defaults to ``DoxygenCommandPrefix/backslash``.
          */
         public init(unorderedListMarker: UnorderedListMarker = .dash,
                     orderedListNumerals: OrderedListNumerals = .allSame(1),
@@ -345,7 +346,7 @@ public struct MarkupFormatter: MarkupWalker {
         /// The length of the last line.
         var lastLineLength = 0
 
-        /// The line number of the most recently printed content. 
+        /// The line number of the most recently printed content.
         ///
         /// This is updated in `addressPendingNewlines(for:)` when line breaks are printed.
         var lineNumber = 0
@@ -463,7 +464,8 @@ public struct MarkupFormatter: MarkupWalker {
                 } else if let numeralPrefix = numeralPrefix(for: parentListItem) {
                     prefix += String(repeating: " ", count: numeralPrefix.count)
                 }
-            } else if element is BlockDirective {
+            }
+            if element.parent is BlockDirective {
                 prefix += "    "
             }
         }
@@ -542,7 +544,7 @@ public struct MarkupFormatter: MarkupWalker {
             state.currentLength += prefix.count
             state.lastLineLength += prefix.count
         }
-        
+
         result += rawText
         state.currentLength += rawText.count
         state.lastLineLength += rawText.count
@@ -733,7 +735,7 @@ public struct MarkupFormatter: MarkupWalker {
         }
         descendInto(listItem)
     }
-    
+
     public mutating func visitHeading(_ heading: Heading) {
         if heading.indexInParent > 0 {
             ensurePrecedingNewlineCount(atLeast: 2)
@@ -1105,7 +1107,9 @@ public struct MarkupFormatter: MarkupWalker {
     }
 
     public mutating func visitBlockDirective(_ blockDirective: BlockDirective) {
-        ensurePrecedingNewlineCount(atLeast: 1)
+        if blockDirective.indexInParent > 0 {
+            ensurePrecedingNewlineCount(atLeast: 2)
+        }
         print("@", for: blockDirective)
         print(blockDirective.name, for: blockDirective)
 
@@ -1124,13 +1128,13 @@ public struct MarkupFormatter: MarkupWalker {
 
         if blockDirective.childCount > 0 {
             print(" {", for: blockDirective)
+            queueNewline()
         }
 
         descendInto(blockDirective)
 
-        queueNewline()
-
         if blockDirective.childCount > 0 {
+            queueNewline()
             print("}", for: blockDirective)
         }
     }
@@ -1150,7 +1154,7 @@ public struct MarkupFormatter: MarkupWalker {
             print(attributes.attributes, for: attributes)
             print(")", for: attributes)
         }
-    
+
         printInlineAttributes()
 
         // Inline attributes *can* have their key-value pairs split across multiple
@@ -1165,15 +1169,29 @@ public struct MarkupFormatter: MarkupWalker {
         }
     }
 
-    public mutating func visitDoxygenParameter(_ doxygenParam: DoxygenParameter) -> () {
-        print("\(formattingOptions.doxygenCommandPrefix.rawValue)param", for: doxygenParam)
-        print(" \(doxygenParam.name) ", for: doxygenParam)
+    private mutating func printDoxygenStart(_ name: String, for element: Markup) {
+        print(formattingOptions.doxygenCommandPrefix.rawValue + name + " ", for: element)
+    }
+
+    public mutating func visitDoxygenDiscussion(_ doxygenDiscussion: DoxygenDiscussion) {
+        printDoxygenStart("discussion", for: doxygenDiscussion)
+        descendInto(doxygenDiscussion)
+    }
+
+    public mutating func visitDoxygenNote(_ doxygenNote: DoxygenNote) {
+        printDoxygenStart("note", for: doxygenNote)
+        descendInto(doxygenNote)
+    }
+
+    public mutating func visitDoxygenParameter(_ doxygenParam: DoxygenParameter) {
+        printDoxygenStart("param", for: doxygenParam)
+        print("\(doxygenParam.name) ", for: doxygenParam)
         descendInto(doxygenParam)
     }
 
-    public mutating func visitDoxygenReturns(_ doxygenReturns: DoxygenReturns) -> () {
+    public mutating func visitDoxygenReturns(_ doxygenReturns: DoxygenReturns) {
         // FIXME: store the actual command name used in the original markup
-        print("\(formattingOptions.doxygenCommandPrefix.rawValue)returns ", for: doxygenReturns)
+        printDoxygenStart("returns", for: doxygenReturns)
         descendInto(doxygenReturns)
     }
 }
